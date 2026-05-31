@@ -14,7 +14,183 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      analisis_riesgo: {
+        Row: {
+          beta: number
+          contaminante_id: number
+          grupo_edad: string
+          id: number
+          municipio_id: number
+          porcentaje_incremento_riesgo: number
+          sexo: string
+        }
+        Insert: {
+          beta: number
+          contaminante_id: number
+          grupo_edad: string
+          id?: number
+          municipio_id: number
+          porcentaje_incremento_riesgo: number
+          sexo: string
+        }
+        Update: {
+          beta?: number
+          contaminante_id?: number
+          grupo_edad?: string
+          id?: number
+          municipio_id?: number
+          porcentaje_incremento_riesgo?: number
+          sexo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analisis_riesgo_contaminante_id_fkey"
+            columns: ["contaminante_id"]
+            isOneToOne: false
+            referencedRelation: "contaminantes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "analisis_riesgo_municipio_id_fkey"
+            columns: ["municipio_id"]
+            isOneToOne: false
+            referencedRelation: "municipios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contaminantes: {
+        Row: {
+          codigo: string
+          id: number
+          nombre: string
+        }
+        Insert: {
+          codigo: string
+          id?: number
+          nombre: string
+        }
+        Update: {
+          codigo?: string
+          id?: number
+          nombre?: string
+        }
+        Relationships: []
+      }
+      defunciones: {
+        Row: {
+          id: number
+          muertes: number
+          municipio_id: number
+          periodo: number
+        }
+        Insert: {
+          id?: number
+          muertes: number
+          municipio_id: number
+          periodo: number
+        }
+        Update: {
+          id?: number
+          muertes?: number
+          municipio_id?: number
+          periodo?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "defunciones_municipio_id_fkey"
+            columns: ["municipio_id"]
+            isOneToOne: false
+            referencedRelation: "municipios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      enfermedades: {
+        Row: {
+          casos: number
+          id: number
+          municipio_id: number
+          periodo: number
+        }
+        Insert: {
+          casos: number
+          id?: number
+          municipio_id: number
+          periodo: number
+        }
+        Update: {
+          casos?: number
+          id?: number
+          municipio_id?: number
+          periodo?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "enfermedades_municipio_id_fkey"
+            columns: ["municipio_id"]
+            isOneToOne: false
+            referencedRelation: "municipios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mediciones_siata: {
+        Row: {
+          categoria_ica: string
+          estacion: string
+          fecha: string
+          id: number
+          latitud: number
+          longitud: number
+          municipio_id: number | null
+          pm25_ica: number
+        }
+        Insert: {
+          categoria_ica: string
+          estacion: string
+          fecha?: string
+          id?: number
+          latitud: number
+          longitud: number
+          municipio_id?: number | null
+          pm25_ica: number
+        }
+        Update: {
+          categoria_ica?: string
+          estacion?: string
+          fecha?: string
+          id?: number
+          latitud?: number
+          longitud?: number
+          municipio_id?: number | null
+          pm25_ica?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mediciones_siata_municipio_id_fkey"
+            columns: ["municipio_id"]
+            isOneToOne: false
+            referencedRelation: "municipios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      municipios: {
+        Row: {
+          id: number
+          nombre: string
+        }
+        Insert: {
+          id?: number
+          nombre: string
+        }
+        Update: {
+          id?: number
+          nombre?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
