@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
-  BarChart, Bar,
 } from "recharts";
 import { Activity, AlertTriangle, MapPin, TrendingUp, Wind, Calculator, Skull } from "lucide-react";
 
