@@ -388,6 +388,12 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
                 <div className="text-sm font-semibold mt-1">PM2.5 actual: {result.pm25_ica_actual.toFixed(1)} µg/m³</div>
               </div>
               
+              {result.nota_estimacion && (
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200 leading-relaxed font-sans">
+                  ⚠️ {result.nota_estimacion}
+                </div>
+              )}
+              
               <div className="pt-3 border-t border-border space-y-3">
                 <div className="text-xs text-muted-foreground uppercase tracking-wider">Incrementos de Riesgo por Enfermedad</div>
                 {result.calculos_riesgo.map((calc, idx) => (

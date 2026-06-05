@@ -55,6 +55,7 @@ export type RiesgoCruzadoResult = {
   sexo_filtro: string;
   grupo_edad_filtro: string;
   calculos_riesgo: CalculoRiesgo[];
+  nota_estimacion?: string;
 };
 
 export async function fetchMunicipios(): Promise<Municipio[]> {
