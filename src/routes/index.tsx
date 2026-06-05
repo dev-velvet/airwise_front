@@ -168,18 +168,21 @@ function Dashboard() {
             <Card className="lg:col-span-3 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold">Enfermedades vs Defunciones por año</h3>
-                <span className="text-xs text-muted-foreground">2008 — 2023</span>
+                <span className="text-xs text-muted-foreground">
+                  {trend.length > 0 ? `${trend[0].periodo} — ${trend[trend.length - 1].periodo}` : "2008 — 2017"}
+                </span>
               </div>
               <div className="h-72">
                 <ResponsiveContainer>
                   <LineChart data={trend}>
                     <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" />
                     <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" />
-                    <YAxis stroke="oklch(0.7 0.02 240)" />
+                    <YAxis yAxisId="left" stroke="oklch(0.78 0.18 175)" name="Enfermedades" />
+                    <YAxis yAxisId="right" orientation="right" stroke="oklch(0.72 0.20 320)" name="Defunciones" />
                     <Tooltip contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8 }} />
                     <Legend />
-                    <Line type="monotone" dataKey="casos" stroke="oklch(0.78 0.18 175)" strokeWidth={2.5} dot={false} name="Enfermedades" />
-                    <Line type="monotone" dataKey="muertes" stroke="oklch(0.72 0.20 320)" strokeWidth={2.5} dot={false} name="Defunciones" />
+                    <Line yAxisId="left" type="monotone" dataKey="casos" stroke="oklch(0.78 0.18 175)" strokeWidth={2.5} dot={false} name="Enfermedades" />
+                    <Line yAxisId="right" type="monotone" dataKey="muertes" stroke="oklch(0.72 0.20 320)" strokeWidth={2.5} dot={false} name="Defunciones" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
