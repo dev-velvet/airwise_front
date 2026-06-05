@@ -10,11 +10,14 @@ export default defineConfig(({ command }) => ({
     tsconfigPaths(),
     tanstackStart({
       server: { entry: "src/server.ts" },
+      spa: {
+        enabled: true,
+      },
     }),
     react(),
     tailwindcss(),
     command === "build" && nitro({
-      preset: "cloudflare-module",
+      preset: "static",
     }),
   ].filter(Boolean),
 }));
