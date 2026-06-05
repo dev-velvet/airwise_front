@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { supabase } from "@/integrations/supabase/client";
 import { aqiColor, aqiTextClass } from "@/lib/aqi";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +10,16 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
 import { Activity, AlertTriangle, MapPin, TrendingUp, Wind, Calculator, Skull } from "lucide-react";
+import {
+  fetchMunicipios,
+  fetchEstaciones,
+  fetchEnfermedades,
+  fetchDefunciones,
+  fetchRiesgoCruzado,
+  Station,
+  Municipio,
+  RiesgoCruzadoResult,
+} from "@/lib/api-client";
 
 const AirMap = lazy(() => import("@/components/AirMap").then((m) => ({ default: m.AirMap })));
 
@@ -24,53 +33,52 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
-type Station = {
-  id: number; estacion: string; latitud: number; longitud: number;
-  pm25_ica: number; categoria_ica: string; municipio_id: number | null;
-};
-type Municipio = { id: number; nombre: string };
-
 function Dashboard() {
   const [mounted, setMounted] = useState(false);
   const [stations, setStations] = useState<Station[]>([]);
   const [municipios, setMunicipios] = useState<Municipio[]>([]);
   const [trend, setTrend] = useState<{ periodo: number; casos: number; muertes: number }[]>([]);
   const [ranking, setRanking] = useState<{ nombre: string; casos: number }[]>([]);
+  const [errorLoading, setErrorLoading] = useState<string>("");
 
   useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     (async () => {
-      const [{ data: s }, { data: m }, { data: enf }, { data: def }] = await Promise.all([
-        supabase.from("mediciones_siata").select("*").order("pm25_ica", { ascending: false }),
-        supabase.from("municipios").select("*").order("nombre"),
-        supabase.from("enfermedades").select("municipio_id, periodo, casos"),
-        supabase.from("defunciones").select("periodo, muertes"),
-      ]);
-      setStations((s ?? []) as Station[]);
-      setMunicipios((m ?? []) as Municipio[]);
+      try {
+        const [s, m, enf, def] = await Promise.all([
+          fetchEstaciones(),
+          fetchMunicipios(),
+          fetchEnfermedades(),
+          fetchDefunciones(),
+        ]);
+        setStations(s);
+        setMunicipios(m);
 
-      // trend by year (sum across municipios)
-      const byYear = new Map<number, { casos: number; muertes: number }>();
-      (enf ?? []).forEach((r: any) => {
-        const e = byYear.get(r.periodo) ?? { casos: 0, muertes: 0 };
-        e.casos += r.casos; byYear.set(r.periodo, e);
-      });
-      (def ?? []).forEach((r: any) => {
-        const e = byYear.get(r.periodo) ?? { casos: 0, muertes: 0 };
-        e.muertes += r.muertes; byYear.set(r.periodo, e);
-      });
-      setTrend([...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([periodo, v]) => ({ periodo, ...v })));
+        // trend by year (sum across municipios)
+        const byYear = new Map<number, { casos: number; muertes: number }>();
+        (enf ?? []).forEach((r) => {
+          const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
+          e.casos += r.casos; byYear.set(r.anio, e);
+        });
+        (def ?? []).forEach((r) => {
+          const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
+          e.muertes += r.muertes; byYear.set(r.anio, e);
+        });
+        setTrend([...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([periodo, v]) => ({ periodo, ...v })));
 
-      // ranking by municipio
-      const byMun = new Map<number, number>();
-      (enf ?? []).forEach((r: any) => byMun.set(r.municipio_id, (byMun.get(r.municipio_id) ?? 0) + r.casos));
-      const muniMap = new Map((m ?? []).map((x: any) => [x.id, x.nombre]));
-      setRanking(
-        [...byMun.entries()]
-          .map(([mid, casos]) => ({ nombre: muniMap.get(mid) ?? "—", casos }))
-          .sort((a, b) => b.casos - a.casos)
-      );
+        // ranking by municipio
+        const byMun = new Map<string, number>();
+        (enf ?? []).forEach((r) => byMun.set(r.municipio, (byMun.get(r.municipio) ?? 0) + r.casos));
+        setRanking(
+          [...byMun.entries()]
+            .map(([nombre, casos]) => ({ nombre, casos }))
+            .sort((a, b) => b.casos - a.casos)
+        );
+      } catch (err: any) {
+        console.error("Error loading dashboard data:", err);
+        setErrorLoading("No se pudo conectar con el servidor API. Por favor, asegúrate de que el backend está corriendo.");
+      }
     })();
   }, []);
 
@@ -99,6 +107,12 @@ function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
+        {errorLoading && (
+          <div className="p-4 bg-destructive/15 border border-destructive text-destructive rounded-lg text-sm">
+            {errorLoading}
+          </div>
+        )}
+
         {/* SECCIÓN A */}
         <section className="space-y-6 fade-up">
           <SectionHeader icon={<MapPin className="h-5 w-5" />} eyebrow="Sección A" title="Estado actual y mapa de calor" />
@@ -282,57 +296,38 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
   const [edad, setEdad] = useState<string>("");
   const [sexo, setSexo] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<null | {
-    estacion: string; pm25: number; categoria: string; beta: number; riesgo: number;
-  }>(null);
+  const [result, setResult] = useState<null | RiesgoCruzadoResult>(null);
   const [error, setError] = useState<string>("");
+
+  const mappedSexo = useMemo(() => {
+    if (sexo === "M") return "Hombre";
+    if (sexo === "F") return "Mujer";
+    if (sexo === "Ambos") return "Ambos sexos";
+    return "";
+  }, [sexo]);
 
   const grupoEdad = useMemo(() => {
     const n = parseInt(edad, 10);
     if (isNaN(n)) return null;
-    if (n <= 14) return "0-14";
-    if (n <= 44) return "15-44";
-    if (n <= 64) return "45-64";
-    return "65+";
+    if (n < 5) return "Menores de 5 años";
+    if (n <= 14) return "5 a 14 años";
+    return "Mayores de 65 años";
   }, [edad]);
 
   async function calc() {
     setError(""); setResult(null);
-    if (!municipio || !grupoEdad || !sexo) { setError("Completa todos los campos."); return; }
+    if (!municipio || !grupoEdad || !mappedSexo) { setError("Completa todos los campos."); return; }
     setLoading(true);
     try {
-      const muni = municipios.find((m) => String(m.id) === municipio);
-      if (!muni) throw new Error("Municipio inválido");
-      const { data: med } = await supabase
-        .from("mediciones_siata").select("*")
-        .ilike("estacion", `%${muni.nombre}%`)
-        .order("pm25_ica", { ascending: false }).limit(1).maybeSingle();
-
-      // Fallback by municipio_id
-      let station: any = med;
-      if (!station) {
-        const { data } = await supabase
-          .from("mediciones_siata").select("*")
-          .eq("municipio_id", muni.id)
-          .order("pm25_ica", { ascending: false }).limit(1).maybeSingle();
-        station = data;
-      }
-      if (!station) throw new Error("Sin mediciones para este municipio.");
-
-      const { data: riesgo } = await supabase
-        .from("analisis_riesgo").select("beta")
-        .eq("municipio_id", muni.id).eq("contaminante_id", 1)
-        .eq("grupo_edad", grupoEdad).eq("sexo", sexo).maybeSingle();
-      if (!riesgo) throw new Error("Sin coeficiente para el perfil.");
-
-      const pm = Number(station.pm25_ica);
-      const beta = Number(riesgo.beta);
-      setResult({
-        estacion: station.estacion, pm25: pm, categoria: station.categoria_ica,
-        beta, riesgo: pm * beta,
-      });
-    } catch (e: any) { setError(e.message ?? "Error"); }
-    finally { setLoading(false); }
+      const muniId = parseInt(municipio, 10);
+      if (isNaN(muniId)) throw new Error("Municipio inválido");
+      const res = await fetchRiesgoCruzado(muniId, mappedSexo, grupoEdad);
+      setResult(res);
+    } catch (e: any) {
+      setError(e.message ?? "Error al calcular el riesgo cruzado");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -364,6 +359,7 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
                 <SelectContent>
                   <SelectItem value="M">Masculino</SelectItem>
                   <SelectItem value="F">Femenino</SelectItem>
+                  <SelectItem value="Ambos">Ambos sexos</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -386,24 +382,28 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
             <div className="mt-3 space-y-4 fade-up">
               <div>
                 <div className="text-xs text-muted-foreground">Estación de referencia</div>
-                <div className="font-medium">{result.estacion}</div>
-                <div className={`text-xs ${aqiTextClass(result.categoria)}`}>{result.categoria}</div>
+                <div className="font-medium">{result.estacion_monitoreo}</div>
+                <div className={`text-xs ${aqiTextClass(result.categoria_ica)}`}>{result.categoria_ica}</div>
+                <div className="text-sm font-semibold mt-1">PM2.5 actual: {result.pm25_ica_actual.toFixed(1)} µg/m³</div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Metric label="PM2.5 actual" value={result.pm25.toFixed(1)} unit="µg/m³" />
-                <Metric label="Coeficiente β" value={result.beta.toFixed(6)} unit="" />
-              </div>
-              <div className="pt-4 border-t border-border">
-                <div className="text-xs text-muted-foreground uppercase tracking-wider">Incremento de riesgo</div>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-5xl font-bold font-display"
-                        style={{ background: "var(--gradient-primary)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-                    {result.riesgo.toFixed(2)}%
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  PM2.5 × β = {result.pm25.toFixed(1)} × {result.beta.toFixed(6)}
-                </p>
+              
+              <div className="pt-3 border-t border-border space-y-3">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider">Incrementos de Riesgo por Enfermedad</div>
+                {result.calculos_riesgo.map((calc, idx) => (
+                  <div key={idx} className="p-2.5 rounded-lg bg-surface/30 border border-border/50">
+                    <div className="text-xs font-semibold text-foreground">{calc.enfermedad}</div>
+                    <div className="flex justify-between items-baseline mt-1.5">
+                      <div className="text-xs text-muted-foreground">Riesgo incremental:</div>
+                      <span className="text-xl font-bold text-primary">
+                        +{calc.incremento_riesgo_porcentaje_actual.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                      <span>β: {calc.beta_historico.toFixed(6)}</span>
+                      <span>Histórico base: {calc.incremento_historico_base.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
@@ -414,17 +414,5 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
         </div>
       </div>
     </Card>
-  );
-}
-
-function Metric({ label, value, unit }: { label: string; value: string; unit: string }) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 flex items-baseline gap-1">
-        <span className="text-2xl font-bold font-display">{value}</span>
-        {unit && <span className="text-xs text-muted-foreground">{unit}</span>}
-      </div>
-    </div>
   );
 }
