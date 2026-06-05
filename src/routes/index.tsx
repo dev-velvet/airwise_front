@@ -311,7 +311,8 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
     if (isNaN(n)) return null;
     if (n < 5) return "Menores de 5 años";
     if (n <= 14) return "5 a 14 años";
-    return "Mayores de 65 años";
+    if (n <= 64) return "15 a 64 años";
+    return "65 años y más";
   }, [edad]);
 
   async function calc() {
