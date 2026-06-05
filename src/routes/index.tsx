@@ -165,26 +165,51 @@ function Dashboard() {
           <SectionHeader icon={<TrendingUp className="h-5 w-5" />} eyebrow="Sección C" title="Tendencias históricas" />
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-            <Card className="lg:col-span-3 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">Enfermedades vs Defunciones por año</h3>
+            <Card className="lg:col-span-3 p-6 space-y-6">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-semibold">Tendencias Temporales</h3>
                 <span className="text-xs text-muted-foreground">
                   {trend.length > 0 ? `${trend[0].periodo} — ${trend[trend.length - 1].periodo}` : "2008 — 2017"}
                 </span>
               </div>
-              <div className="h-72">
-                <ResponsiveContainer>
-                  <LineChart data={trend}>
-                    <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" />
-                    <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" />
-                    <YAxis yAxisId="left" stroke="oklch(0.78 0.18 175)" name="Enfermedades" />
-                    <YAxis yAxisId="right" orientation="right" stroke="oklch(0.72 0.20 320)" name="Defunciones" />
-                    <Tooltip contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8 }} />
-                    <Legend />
-                    <Line yAxisId="left" type="monotone" dataKey="casos" stroke="oklch(0.78 0.18 175)" strokeWidth={2.5} dot={false} name="Enfermedades" />
-                    <Line yAxisId="right" type="monotone" dataKey="muertes" stroke="oklch(0.72 0.20 320)" strokeWidth={2.5} dot={false} name="Defunciones" />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Chart 1: Enfermedades */}
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-[oklch(0.78 0.18 175)]" />
+                    Enfermedades Respiratorias (Casos)
+                  </div>
+                  <div className="h-56">
+                    <ResponsiveContainer>
+                      <LineChart data={trend}>
+                        <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" />
+                        <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" />
+                        <YAxis stroke="oklch(0.7 0.02 240)" />
+                        <Tooltip contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8 }} />
+                        <Line type="monotone" dataKey="casos" stroke="oklch(0.78 0.18 175)" strokeWidth={2} dot={{ r: 3 }} name="Casos" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Chart 2: Defunciones */}
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-[oklch(0.72 0.20 320)]" />
+                    Defunciones Asociadas (Muertes)
+                  </div>
+                  <div className="h-56">
+                    <ResponsiveContainer>
+                      <LineChart data={trend}>
+                        <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" />
+                        <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" />
+                        <YAxis stroke="oklch(0.7 0.02 240)" />
+                        <Tooltip contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8 }} />
+                        <Line type="monotone" dataKey="muertes" stroke="oklch(0.72 0.20 320)" strokeWidth={2} dot={{ r: 3 }} name="Muertes" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </div>
             </Card>
 
