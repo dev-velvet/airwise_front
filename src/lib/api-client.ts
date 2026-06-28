@@ -1,5 +1,43 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+const CACHE_PREFIX = "airwise_cache_";
+const CACHE_TTL: Record<string, number> = {
+  estaciones: 1000 * 60 * 15,      // 15 min
+  municipios: 1000 * 60 * 60 * 24,  // 24 h
+  enfermedades: 1000 * 60 * 60 * 24,
+  defunciones: 1000 * 60 * 60 * 24,
+};
+
+function getCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    if (!raw) return null;
+    const { data, expiry } = JSON.parse(raw);
+    if (Date.now() > expiry) { localStorage.removeItem(CACHE_PREFIX + key); return null; }
+    return data as T;
+  } catch { return null; }
+}
+
+function setCache<T>(key: string, data: T, ttl: number): void {
+  try {
+    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ data, expiry: Date.now() + ttl }));
+  } catch { /* quota exceeded, ignore */ }
+}
+
+async function fetchWithCache<T>(key: string, url: string, ttl: number): Promise<T> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as T;
+    setCache(key, data, ttl);
+    return data;
+  } catch (err) {
+    const cached = getCache<T>(key);
+    if (cached) return cached;
+    throw err;
+  }
+}
+
 export type Station = {
   id: number;
   estacion: string;
@@ -59,27 +97,19 @@ export type RiesgoCruzadoResult = {
 };
 
 export async function fetchMunicipios(): Promise<Municipio[]> {
-  const res = await fetch(`${API_BASE_URL}/api/municipios`);
-  if (!res.ok) throw new Error("Error al obtener municipios");
-  return res.json();
+  return fetchWithCache("municipios", `${API_BASE_URL}/api/municipios`, CACHE_TTL.municipios);
 }
 
 export async function fetchEstaciones(): Promise<Station[]> {
-  const res = await fetch(`${API_BASE_URL}/api/siata/actual`);
-  if (!res.ok) throw new Error("Error al obtener estaciones");
-  return res.json();
+  return fetchWithCache("estaciones", `${API_BASE_URL}/api/siata/actual`, CACHE_TTL.estaciones);
 }
 
 export async function fetchEnfermedades(): Promise<EnfermedadData[]> {
-  const res = await fetch(`${API_BASE_URL}/api/salud/historico/enfermedades`);
-  if (!res.ok) throw new Error("Error al obtener histórico de enfermedades");
-  return res.json();
+  return fetchWithCache("enfermedades", `${API_BASE_URL}/api/salud/historico/enfermedades`, CACHE_TTL.enfermedades);
 }
 
 export async function fetchDefunciones(): Promise<DefuncionData[]> {
-  const res = await fetch(`${API_BASE_URL}/api/salud/historico/defunciones`);
-  if (!res.ok) throw new Error("Error al obtener histórico de defunciones");
-  return res.json();
+  return fetchWithCache("defunciones", `${API_BASE_URL}/api/salud/historico/defunciones`, CACHE_TTL.defunciones);
 }
 
 export async function fetchRiesgoCruzado(

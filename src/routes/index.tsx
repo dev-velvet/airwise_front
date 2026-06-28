@@ -39,47 +39,61 @@ function Dashboard() {
   const [municipios, setMunicipios] = useState<Municipio[]>([]);
   const [trend, setTrend] = useState<{ periodo: number; casos: number; muertes: number }[]>([]);
   const [ranking, setRanking] = useState<{ nombre: string; casos: number }[]>([]);
-  const [errorLoading, setErrorLoading] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
 
+  function processData(s: Station[], m: Municipio[], enf: EnfermedadData[] | null, def: DefuncionData[] | null) {
+    setStations(s);
+    setMunicipios(m);
+
+    const byYear = new Map<number, { casos: number; muertes: number }>();
+    (enf ?? []).forEach((r) => {
+      const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
+      e.casos += r.casos; byYear.set(r.anio, e);
+    });
+    (def ?? []).forEach((r) => {
+      const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
+      e.muertes += r.muertes; byYear.set(r.anio, e);
+    });
+    setTrend([...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([periodo, v]) => ({ periodo, ...v })));
+
+    const byMun = new Map<string, number>();
+    (enf ?? []).forEach((r) => byMun.set(r.municipio, (byMun.get(r.municipio) ?? 0) + r.casos));
+    setRanking(
+      [...byMun.entries()]
+        .map(([nombre, casos]) => ({ nombre, casos }))
+        .sort((a, b) => b.casos - a.casos)
+    );
+  }
+
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      try {
-        const [s, m, enf, def] = await Promise.all([
-          fetchEstaciones(),
-          fetchMunicipios(),
-          fetchEnfermedades(),
-          fetchDefunciones(),
-        ]);
-        setStations(s);
-        setMunicipios(m);
-
-        // trend by year (sum across municipios)
-        const byYear = new Map<number, { casos: number; muertes: number }>();
-        (enf ?? []).forEach((r) => {
-          const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
-          e.casos += r.casos; byYear.set(r.anio, e);
-        });
-        (def ?? []).forEach((r) => {
-          const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
-          e.muertes += r.muertes; byYear.set(r.anio, e);
-        });
-        setTrend([...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([periodo, v]) => ({ periodo, ...v })));
-
-        // ranking by municipio
-        const byMun = new Map<string, number>();
-        (enf ?? []).forEach((r) => byMun.set(r.municipio, (byMun.get(r.municipio) ?? 0) + r.casos));
-        setRanking(
-          [...byMun.entries()]
-            .map(([nombre, casos]) => ({ nombre, casos }))
-            .sort((a, b) => b.casos - a.casos)
-        );
-      } catch (err: any) {
-        console.error("Error loading dashboard data:", err);
-        setErrorLoading("No se pudo conectar con el servidor API. Por favor, asegúrate de que el backend está corriendo.");
+      let loaded = false;
+      for (let attempt = 0; attempt < 12 && !loaded && !cancelled; attempt++) {
+        if (attempt > 0) {
+          setRefreshing(true);
+          await new Promise((r) => setTimeout(r, 5000));
+        }
+        try {
+          const [s, m, enf, def] = await Promise.all([
+            fetchEstaciones(),
+            fetchMunicipios(),
+            fetchEnfermedades(),
+            fetchDefunciones(),
+          ]);
+          if (!cancelled) {
+            processData(s, m, enf, def);
+            loaded = true;
+          }
+        } catch { /* retry */ }
       }
+      if (!cancelled) setLoading(false);
+      if (!cancelled) setRefreshing(false);
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const avgPm25 = useMemo(
@@ -107,9 +121,16 @@ function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
-        {errorLoading && (
-          <div className="p-4 bg-destructive/15 border border-destructive text-destructive rounded-lg text-sm">
-            {errorLoading}
+        {loading && (
+          <div className="p-4 bg-primary/10 border border-primary/20 text-primary rounded-lg text-sm flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+            Conectando con estaciones de monitoreo…
+          </div>
+        )}
+        {refreshing && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-200 rounded-lg text-xs flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+            Actualizando datos en vivo…
           </div>
         )}
 
