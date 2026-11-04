@@ -44,14 +44,25 @@ export const Route = createFileRoute("/")({
 });
 
 // Perfil de susceptibilidad empírico base (Grisales-Romero et al. / AnalisisRiesgo 2008-2017)
-const DEFAULT_SUSCEPTIBILIDAD = [
-  { grupo: "Menores de 5 años", riesgo_pct: 10.71, ic_inf: 4.10, ic_sup: 12.00, tipo: "edad", color: "oklch(0.72 0.20 320)" },
-  { grupo: "Mayores de 65 años", riesgo_pct: 6.75, ic_inf: 2.10, ic_sup: 8.00, tipo: "edad", color: "oklch(0.78 0.18 175)" },
-  { grupo: "5 a 14 años", riesgo_pct: 6.70, ic_inf: 1.50, ic_sup: 8.00, tipo: "edad", color: "oklch(0.75 0.16 220)" },
-  { grupo: "IRA Baja / Bronquiolitis", riesgo_pct: 9.17, ic_inf: 3.20, ic_sup: 11.20, tipo: "patologia", color: "oklch(0.80 0.18 85)" },
-  { grupo: "IRA Alta (Rinosinusitis)", riesgo_pct: 8.72, ic_inf: 2.50, ic_sup: 10.10, tipo: "patologia", color: "oklch(0.78 0.18 175)" },
-  { grupo: "Influenza y Neumonía", riesgo_pct: 6.91, ic_inf: 1.80, ic_sup: 9.00, tipo: "patologia", color: "oklch(0.72 0.20 320)" },
-  { grupo: "Oído Medio / Mastoides", riesgo_pct: 6.14, ic_inf: 1.20, ic_sup: 8.10, tipo: "patologia", color: "oklch(0.68 0.14 280)" },
+type SuscBarItem = {
+  grupo: string;
+  riesgo_pct: number;
+  ic_inf: number;
+  ic_sup: number;
+  color: string;
+};
+
+const DEFAULT_SUSC_EDAD: SuscBarItem[] = [
+  { grupo: "Menores de 5 años", riesgo_pct: 10.71, ic_inf: 4.10, ic_sup: 12.00, color: "oklch(0.72 0.20 320)" },
+  { grupo: "Mayores de 65 años", riesgo_pct: 6.75, ic_inf: 2.10, ic_sup: 8.00, color: "oklch(0.78 0.18 175)" },
+  { grupo: "5 a 14 años", riesgo_pct: 6.70, ic_inf: 1.50, ic_sup: 8.00, color: "oklch(0.75 0.16 220)" },
+];
+
+const DEFAULT_SUSC_DIAGNOSTICO: SuscBarItem[] = [
+  { grupo: "IRA Inferior", riesgo_pct: 9.17, ic_inf: 3.20, ic_sup: 11.20, color: "oklch(0.80 0.18 85)" },
+  { grupo: "IRA Superior", riesgo_pct: 8.72, ic_inf: 2.50, ic_sup: 10.10, color: "oklch(0.78 0.18 175)" },
+  { grupo: "Influenza/Neumonía", riesgo_pct: 6.91, ic_inf: 1.80, ic_sup: 9.00, color: "oklch(0.72 0.20 320)" },
+  { grupo: "Oído Medio", riesgo_pct: 6.14, ic_inf: 1.20, ic_sup: 8.10, color: "oklch(0.68 0.14 280)" },
 ];
 
 // Tasas ajustadas de mortalidad respiratoria por 100.000 hab. (DANE / AMVA 2008-2017)
@@ -83,11 +94,13 @@ function Dashboard() {
   }[]>([]);
 
   // Perfil de susceptibilidad y ranking territorial
-  const [susceptibilidad, setSusceptibilidad] = useState(DEFAULT_SUSCEPTIBILIDAD);
+  const [suscEdad, setSuscEdad] = useState<SuscBarItem[]>(DEFAULT_SUSC_EDAD);
+  const [suscDiag, setSuscDiag] = useState<SuscBarItem[]>(DEFAULT_SUSC_DIAGNOSTICO);
   const [suscFiltro, setSuscFiltro] = useState<"edad" | "patologia">("edad");
   const [rankingTasas, setRankingTasas] = useState(DEFAULT_TASAS_MORTALIDAD);
   const [rankingCasos, setRankingCasos] = useState<{ nombre: string; valor: number }[]>([]);
   const [rankingMetric, setRankingMetric] = useState<"tasa" | "casos">("tasa");
+  const [mapMetric, setMapMetric] = useState<"24h" | "instantaneo">("24h");
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,7 +113,7 @@ function Dashboard() {
     enf: EnfermedadData[] | null,
     def: DefuncionData[] | null,
     tasasApi: TasaMortalidadMunicipio[] | null,
-    suscApi: SusceptibilidadItem[] | null
+    suscApi: any
   ) {
     setStations(s);
     setMunicipios(m);
@@ -140,18 +153,99 @@ function Dashboard() {
     }
 
     // 4. Perfil de susceptibilidad epidemiológica
-    if (suscApi && suscApi.length > 0) {
-      const formatted = suscApi.map((item) => ({
-        grupo: item.grupo_edad || item.grupo_diagnostico,
-        riesgo_pct: Number(item.incremento_riesgo_pct),
-        ic_inf: Number(item.limite_inferior),
-        ic_sup: Number(item.limite_superior),
-        tipo: item.grupo_edad ? ("edad" as const) : ("patologia" as const),
-        color: item.grupo_edad?.includes("<5") || item.grupo_edad?.includes("Menor")
-          ? "oklch(0.72 0.20 320)"
-          : "oklch(0.78 0.18 175)",
-      }));
-      setSusceptibilidad(formatted);
+    if (suscApi) {
+      // Caso estructurado { por_edad, por_diagnostico }
+      if (suscApi.por_edad && Array.isArray(suscApi.por_edad) && suscApi.por_edad.length > 0) {
+        setSuscEdad(
+          suscApi.por_edad.map((item: any) => ({
+            grupo: item.grupo,
+            riesgo_pct: Number(item.incremento_riesgo_pct),
+            ic_inf: item.limite_inferior != null ? Number(item.limite_inferior) : 0,
+            ic_sup: item.limite_superior != null ? Number(item.limite_superior) : 0,
+            color: item.grupo?.includes("<5") || item.grupo?.includes("Menor")
+              ? "oklch(0.72 0.20 320)"
+              : "oklch(0.78 0.18 175)",
+          }))
+        );
+      }
+      if (suscApi.por_diagnostico && Array.isArray(suscApi.por_diagnostico) && suscApi.por_diagnostico.length > 0) {
+        setSuscDiag(
+          suscApi.por_diagnostico.map((item: any) => {
+            let clean = item.grupo;
+            if (clean.includes("inferior")) clean = "IRA Inferior";
+            else if (clean.includes("superior")) clean = "IRA Superior";
+            else if (clean.includes("influenza") || clean.includes("neumon")) clean = "Influenza/Neumonía";
+            else if (clean.includes("oído") || clean.includes("mastoides")) clean = "Oído Medio";
+            else if (clean.includes("sistema respiratorio")) clean = "Total Respiratorias";
+
+            return {
+              grupo: clean,
+              riesgo_pct: Number(item.incremento_riesgo_pct),
+              ic_inf: item.limite_inferior != null ? Number(item.limite_inferior) : 0,
+              ic_sup: item.limite_superior != null ? Number(item.limite_superior) : 0,
+              color: clean.includes("Inferior")
+                ? "oklch(0.80 0.18 85)"
+                : clean.includes("Superior")
+                ? "oklch(0.78 0.18 175)"
+                : "oklch(0.72 0.20 320)",
+            };
+          })
+        );
+      } else if (Array.isArray(suscApi) && suscApi.length > 0) {
+        // Caso plano (arreglo)
+        const edadMap = new Map<string, { sum: number; count: number; inf: number; sup: number }>();
+        const diagMap = new Map<string, { sum: number; count: number; inf: number; sup: number }>();
+
+        suscApi.forEach((item: any) => {
+          if (item.grupo_edad) {
+            const cur = edadMap.get(item.grupo_edad) ?? { sum: 0, count: 0, inf: 0, sup: 0 };
+            cur.sum += Number(item.incremento_riesgo_pct || 0);
+            cur.count += 1;
+            cur.inf = Number(item.limite_inferior || 0);
+            cur.sup = Number(item.limite_superior || 0);
+            edadMap.set(item.grupo_edad, cur);
+          }
+          const diagNombre = item.grupo_diagnostico || item.grupo;
+          if (diagNombre && !diagNombre.includes("año") && !diagNombre.includes("Menor") && !diagNombre.includes("Mayor")) {
+            let clean = diagNombre;
+            if (clean.includes("inferior")) clean = "IRA Inferior";
+            else if (clean.includes("superior")) clean = "IRA Superior";
+            else if (clean.includes("influenza") || clean.includes("neumon")) clean = "Influenza/Neumonía";
+            else if (clean.includes("oído") || clean.includes("mastoides")) clean = "Oído Medio";
+            else if (clean.includes("sistema respiratorio")) clean = "Total Respiratorias";
+
+            const cur = diagMap.get(clean) ?? { sum: 0, count: 0, inf: 0, sup: 0 };
+            cur.sum += Number(item.incremento_riesgo_pct || 0);
+            cur.count += 1;
+            cur.inf = Number(item.limite_inferior || 0);
+            cur.sup = Number(item.limite_superior || 0);
+            diagMap.set(clean, cur);
+          }
+        });
+
+        if (edadMap.size > 0) {
+          setSuscEdad(
+            [...edadMap.entries()].map(([grupo, v]) => ({
+              grupo,
+              riesgo_pct: Number((v.sum / v.count).toFixed(2)),
+              ic_inf: v.inf,
+              ic_sup: v.sup,
+              color: grupo.includes("<5") || grupo.includes("Menor") ? "oklch(0.72 0.20 320)" : "oklch(0.78 0.18 175)",
+            }))
+          );
+        }
+        if (diagMap.size > 0) {
+          setSuscDiag(
+            [...diagMap.entries()].map(([grupo, v]) => ({
+              grupo,
+              riesgo_pct: Number((v.sum / v.count).toFixed(2)),
+              ic_inf: v.inf,
+              ic_sup: v.sup,
+              color: grupo.includes("Inferior") ? "oklch(0.80 0.18 85)" : "oklch(0.78 0.18 175)",
+            }))
+          );
+        }
+      }
     }
   }
 
@@ -185,15 +279,28 @@ function Dashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  const avgPm25 = useMemo(
+  const avgPm25_24h = useMemo(
+    () => stations.length ? stations.reduce((a, s) => a + Number(s.pm25_promedio_24h ?? s.pm25_ica), 0) / stations.length : 0,
+    [stations]
+  );
+  const avgPm25_inst = useMemo(
     () => stations.length ? stations.reduce((a, s) => a + Number(s.pm25_ica), 0) / stations.length : 0,
     [stations]
   );
-  const worst = stations[0];
+  const activeAvgPm25 = mapMetric === "24h" ? avgPm25_24h : avgPm25_inst;
+
+  const worst = useMemo(() => {
+    if (!stations.length) return null;
+    return [...stations].sort((a, b) => {
+      const valA = mapMetric === "24h" ? Number(a.pm25_promedio_24h ?? a.pm25_ica) : Number(a.pm25_ica);
+      const valB = mapMetric === "24h" ? Number(b.pm25_promedio_24h ?? b.pm25_ica) : Number(b.pm25_ica);
+      return valB - valA;
+    })[0];
+  }, [stations, mapMetric]);
 
   const suscFiltrada = useMemo(
-    () => susceptibilidad.filter((s) => s.tipo === suscFiltro),
-    [susceptibilidad, suscFiltro]
+    () => (suscFiltro === "edad" ? suscEdad : suscDiag),
+    [suscFiltro, suscEdad, suscDiag]
   );
 
   const activeRanking = rankingMetric === "tasa" ? rankingTasas : rankingCasos;
@@ -223,9 +330,9 @@ function Dashboard() {
           <KpiCard
             icon={<Wind />}
             label="Promedio Valle de Aburrá"
-            value={loading ? "—" : avgPm25.toFixed(1)}
+            value={loading ? "—" : activeAvgPm25.toFixed(1)}
             unit="µg/m³ PM2.5"
-            hint={loading ? "Cargando…" : "Promedio instantáneo red SIATA"}
+            hint={mapMetric === "24h" ? "Promedio móvil 24 h (Base Res. 2254)" : "Promedio instantáneo red SIATA"}
           />
           <KpiCard
             icon={<MapPin />}
@@ -237,32 +344,64 @@ function Dashboard() {
           <KpiCard
             icon={<AlertTriangle />}
             label="Punto más crítico"
-            value={loading || !worst ? "—" : `${worst.pm25_ica.toFixed(0)}`}
+            value={loading || !worst ? "—" : (mapMetric === "24h" ? Number(worst.pm25_promedio_24h ?? worst.pm25_ica).toFixed(0) : Number(worst.pm25_ica).toFixed(0))}
             unit="µg/m³"
-            hint={worst ? `${worst.estacion} · ${worst.categoria_ica}` : "—"}
+            hint={worst ? `${worst.estacion} · ${mapMetric === "24h" ? (worst.categoria_ica_24h ?? worst.categoria_ica) : (worst.categoria_ica_actual ?? worst.categoria_ica)}` : "—"}
             accent
           />
           <KpiCard
             icon={<Activity />}
             label="Condición predominante"
-            value={loading ? "—" : dominantCategory(stations)}
+            value={loading ? "—" : dominantCategory(stations, mapMetric)}
             unit=""
-            hint="Clasificación ICA (Res. 2254)"
+            hint={mapMetric === "24h" ? "Clasificación ICA (sobre 24 h)" : "Clasificación ICA instantánea"}
           />
         </section>
 
         {/* SECCIÓN A */}
         <section className="space-y-6 fade-up">
-          <SectionHeader icon={<MapPin className="h-5 w-5" />} eyebrow="Sección A" title="Red de monitoreo en tiempo real" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <SectionHeader icon={<MapPin className="h-5 w-5" />} eyebrow="Sección A" title="Red de monitoreo de calidad del aire" />
+            
+            {/* Conmutador de métrica del mapa */}
+            <div className="flex items-center gap-1.5 p-1 rounded-lg bg-surface-elevated border border-border self-start sm:self-auto shadow-sm">
+              <span className="text-[11px] font-mono text-muted-foreground mr-1.5 hidden md:inline">Métrica:</span>
+              <button
+                onClick={() => setMapMetric("24h")}
+                className={`px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-1.5 ${
+                  mapMetric === "24h"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+                title="Promedio móvil de las últimas 24 horas (normativo Res. 2254/2017 y OMS)"
+              >
+                <span className={`h-2 w-2 rounded-full ${mapMetric === "24h" ? "bg-primary-foreground" : "bg-emerald-400"}`} />
+                Promedio 24 h (Norma)
+              </button>
+              <button
+                onClick={() => setMapMetric("instantaneo")}
+                className={`px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-1.5 ${
+                  mapMetric === "instantaneo"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+                title="Última medición instantánea emitida por el sensor SIATA"
+              >
+                <span className={`h-2 w-2 rounded-full ${mapMetric === "instantaneo" ? "bg-primary-foreground" : "bg-amber-400"}`} />
+                En vivo (Instantáneo)
+              </button>
+            </div>
+          </div>
+
           <Card className="overflow-hidden p-0" style={{ boxShadow: "var(--shadow-card)" }}>
             <div className="h-[460px] relative">
               {mounted && !loading ? (
                 <Suspense fallback={<MapSkeleton />}>
-                  <AirMap stations={stations} />
+                  <AirMap stations={stations} metrica={mapMetric} />
                 </Suspense>
               ) : <MapSkeleton />}
             </div>
-            <Legend2 />
+            <Legend2 metrica={mapMetric} />
           </Card>
         </section>
 
@@ -353,10 +492,22 @@ function Dashboard() {
 
                   <div className="h-56">
                     <ResponsiveContainer>
-                      <BarChart data={suscFiltrada} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                      <BarChart
+                        data={suscFiltrada}
+                        layout="vertical"
+                        margin={{ left: 10, right: 20, top: 8, bottom: 5 }}
+                        barSize={suscFiltro === "edad" ? 22 : 18}
+                      >
                         <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" horizontal={false} />
                         <XAxis type="number" unit="%" stroke="oklch(0.7 0.02 240)" fontSize={11} domain={[0, 14]} />
-                        <YAxis dataKey="grupo" type="category" stroke="oklch(0.7 0.02 240)" fontSize={10} width={95} tickLine={false} />
+                        <YAxis
+                          dataKey="grupo"
+                          type="category"
+                          stroke="oklch(0.7 0.02 240)"
+                          fontSize={10}
+                          width={suscFiltro === "edad" ? 100 : 115}
+                          tickLine={false}
+                        />
                         <Tooltip
                           contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }}
                           formatter={(v: any, _, entry: any) => [
@@ -480,10 +631,16 @@ function Dashboard() {
   );
 }
 
-function dominantCategory(stations: Station[]) {
+function dominantCategory(stations: Station[], metric: "24h" | "instantaneo" = "24h") {
   if (!stations.length) return "—";
   const counts: Record<string, number> = {};
-  stations.forEach((s) => { counts[s.categoria_ica] = (counts[s.categoria_ica] ?? 0) + 1; });
+  stations.forEach((s) => {
+    const val = metric === "24h" ? Number(s.pm25_promedio_24h ?? s.pm25_ica) : Number(s.pm25_ica);
+    const cat = metric === "24h"
+      ? (s.categoria_ica_24h ?? (val <= 12 ? "Buena" : val <= 37 ? "Moderada" : val <= 55 ? "Dañina a grupos sensibles" : val <= 150 ? "Dañina" : "Muy dañina"))
+      : (s.categoria_ica_actual ?? s.categoria_ica);
+    counts[cat] = (counts[cat] ?? 0) + 1;
+  });
   return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
@@ -525,23 +682,28 @@ function MapSkeleton() {
   return <div className="h-full w-full bg-muted/40 animate-pulse" />;
 }
 
-function Legend2() {
+function Legend2({ metrica = "24h" }: { metrica?: "24h" | "instantaneo" }) {
   const items = [
     { c: "Buena", v: "0–12" },
-    { c: "Moderada", v: "12–35" },
-    { c: "Dañina a grupos sensibles", v: "35–55" },
-    { c: "Dañina", v: "55–150" },
+    { c: "Moderada", v: "12–37" },
+    { c: "Dañina a grupos sensibles", v: "38–55" },
+    { c: "Dañina", v: "56–150" },
     { c: "Muy dañina", v: "150+" },
   ];
   return (
-    <div className="flex flex-wrap gap-4 px-5 py-3 border-t border-border bg-surface/50">
-      {items.map((it) => (
-        <div key={it.c} className="flex items-center gap-2 text-xs">
-          <span className="h-2.5 w-2.5 rounded-full" style={{ background: aqiColor(it.c) }} />
-          <span className="text-foreground">{it.c}</span>
-          <span className="text-muted-foreground">{it.v} µg/m³</span>
-        </div>
-      ))}
+    <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-t border-border bg-surface/50 text-xs">
+      <div className="flex flex-wrap gap-4">
+        {items.map((it) => (
+          <div key={it.c} className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: aqiColor(it.c) }} />
+            <span className="text-foreground">{it.c}</span>
+            <span className="text-muted-foreground">{it.v} µg/m³</span>
+          </div>
+        ))}
+      </div>
+      <div className="text-[11px] text-muted-foreground font-mono">
+        Escala ICA PM2.5 · {metrica === "24h" ? "Promedio móvil 24 h (Res. 2254)" : "Medición instantánea en vivo"}
+      </div>
     </div>
   );
 }

@@ -47,6 +47,8 @@ export type Station = {
   pm25_promedio_24h?: number;
   n_lecturas_24h?: number;
   categoria_ica: string;
+  categoria_ica_24h?: string;
+  categoria_ica_actual?: string;
   municipio_id: number | null;
 };
 
@@ -86,11 +88,15 @@ export type TasaMortalidadMunicipio = {
 };
 
 export type SusceptibilidadItem = {
-  grupo_edad: string;
-  grupo_diagnostico: string;
+  grupo: string;
   incremento_riesgo_pct: number;
-  limite_inferior: number;
-  limite_superior: number;
+  limite_inferior?: number;
+  limite_superior?: number;
+};
+
+export type SusceptibilidadResponse = {
+  por_edad: SusceptibilidadItem[];
+  por_diagnostico: SusceptibilidadItem[];
 };
 
 export type CalculoRiesgo = {
@@ -139,7 +145,7 @@ export async function fetchTasasMortalidad(): Promise<TasaMortalidadMunicipio[]>
   return fetchWithCache("tasas_mortalidad", `${API_BASE_URL}/api/salud/tasas-mortalidad`, CACHE_TTL.defunciones);
 }
 
-export async function fetchSusceptibilidad(): Promise<SusceptibilidadItem[]> {
+export async function fetchSusceptibilidad(): Promise<SusceptibilidadResponse | any> {
   return fetchWithCache("susceptibilidad", `${API_BASE_URL}/api/salud/susceptibilidad`, CACHE_TTL.defunciones);
 }
 
