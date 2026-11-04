@@ -310,10 +310,7 @@ function Dashboard() {
       {/* Hero */}
       <header className="relative overflow-hidden border-b border-border" style={{ background: "var(--gradient-hero)" }}>
         <div className="max-w-7xl mx-auto px-6 py-12 fade-up">
-          <div className="flex items-center gap-2 text-primary text-sm font-mono uppercase tracking-widest">
-            <Wind className="h-4 w-4" /> SIATA · Valle de Aburrá · en vivo
-          </div>
-          <h1 className="mt-3 text-5xl md:text-6xl font-bold leading-tight">
+          <h1 className="text-5xl md:text-6xl font-bold leading-tight">
             Aire<span className="text-primary">Salud</span>
           </h1>
           <p className="mt-3 max-w-2xl text-lg text-muted-foreground leading-relaxed">
