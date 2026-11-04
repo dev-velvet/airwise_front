@@ -44,6 +44,8 @@ export type Station = {
   latitud: number;
   longitud: number;
   pm25_ica: number;
+  pm25_promedio_24h?: number;
+  n_lecturas_24h?: number;
   categoria_ica: string;
   municipio_id: number | null;
 };
@@ -78,10 +80,27 @@ export type DefuncionData = {
   muertes: number;
 };
 
+export type TasaMortalidadMunicipio = {
+  municipio: string;
+  tasa_ajustada_promedio: number;
+};
+
+export type SusceptibilidadItem = {
+  grupo_edad: string;
+  grupo_diagnostico: string;
+  incremento_riesgo_pct: number;
+  limite_inferior: number;
+  limite_superior: number;
+};
+
 export type CalculoRiesgo = {
   enfermedad: string;
   beta_historico: number;
   incremento_riesgo_porcentaje_actual: number;
+  incremento_riesgo_porcentaje_24h?: number;
+  incremento_riesgo_porcentaje_instantaneo?: number;
+  incremento_riesgo_inf?: number | null;
+  incremento_riesgo_sup?: number | null;
   incremento_historico_base: number;
 };
 
@@ -89,7 +108,11 @@ export type RiesgoCruzadoResult = {
   municipio: string;
   estacion_monitoreo: string;
   pm25_ica_actual: number;
+  pm25_promedio_24h?: number;
+  n_lecturas_24h?: number;
+  metrica_exposicion?: string;
   categoria_ica: string;
+  categoria_ica_actual?: string;
   sexo_filtro: string;
   grupo_edad_filtro: string;
   calculos_riesgo: CalculoRiesgo[];
@@ -110,6 +133,14 @@ export async function fetchEnfermedades(): Promise<EnfermedadData[]> {
 
 export async function fetchDefunciones(): Promise<DefuncionData[]> {
   return fetchWithCache("defunciones", `${API_BASE_URL}/api/salud/historico/defunciones`, CACHE_TTL.defunciones);
+}
+
+export async function fetchTasasMortalidad(): Promise<TasaMortalidadMunicipio[]> {
+  return fetchWithCache("tasas_mortalidad", `${API_BASE_URL}/api/salud/tasas-mortalidad`, CACHE_TTL.defunciones);
+}
+
+export async function fetchSusceptibilidad(): Promise<SusceptibilidadItem[]> {
+  return fetchWithCache("susceptibilidad", `${API_BASE_URL}/api/salud/susceptibilidad`, CACHE_TTL.defunciones);
 }
 
 export async function fetchRiesgoCruzado(

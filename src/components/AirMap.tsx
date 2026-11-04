@@ -7,6 +7,8 @@ type Station = {
   latitud: number;
   longitud: number;
   pm25_ica: number;
+  pm25_promedio_24h?: number;
+  n_lecturas_24h?: number;
   categoria_ica: string;
 };
 
@@ -40,10 +42,13 @@ export function AirMap({ stations }: { stations: Station[] }) {
               <div className="font-sans">
                 <div className="text-sm font-semibold mb-1">{s.estacion}</div>
                 <div className="text-xs">
-                  PM2.5 <span className="font-bold">{Number(s.pm25_ica).toFixed(1)}</span> µg/m³
+                  Promedio 24 h: <span className="font-bold">{Number(s.pm25_promedio_24h ?? s.pm25_ica).toFixed(1)}</span> µg/m³
                 </div>
-                <div className={`text-xs font-semibold ${aqiTextClass(s.categoria_ica)}`}>
-                  {s.categoria_ica}
+                <div className="text-[11px] text-muted-foreground">
+                  En vivo: {Number(s.pm25_ica).toFixed(1)} µg/m³
+                </div>
+                <div className={`text-xs font-semibold mt-0.5 ${aqiTextClass(s.categoria_ica)}`}>
+                  ICA: {s.categoria_ica}
                 </div>
               </div>
             </Popup>

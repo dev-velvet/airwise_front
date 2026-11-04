@@ -8,17 +8,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  BarChart, Bar, Cell,
 } from "recharts";
-import { Activity, AlertTriangle, MapPin, TrendingUp, Wind, Calculator, Skull } from "lucide-react";
+import {
+  Activity, AlertTriangle, MapPin, TrendingUp, Wind, Calculator, Skull,
+  BarChart3, Users, Info, Layers, ArrowUpDown
+} from "lucide-react";
 import {
   fetchMunicipios,
   fetchEstaciones,
   fetchEnfermedades,
   fetchDefunciones,
   fetchRiesgoCruzado,
+  fetchTasasMortalidad,
+  fetchSusceptibilidad,
   Station,
   Municipio,
   RiesgoCruzadoResult,
+  EnfermedadData,
+  DefuncionData,
+  TasaMortalidadMunicipio,
+  SusceptibilidadItem,
 } from "@/lib/api-client";
 
 const AirMap = lazy(() => import("@/components/AirMap").then((m) => ({ default: m.AirMap })));
@@ -33,39 +43,116 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
+// Perfil de susceptibilidad empírico base (Grisales-Romero et al. / AnalisisRiesgo 2008-2017)
+const DEFAULT_SUSCEPTIBILIDAD = [
+  { grupo: "Menores de 5 años", riesgo_pct: 10.71, ic_inf: 4.10, ic_sup: 12.00, tipo: "edad", color: "oklch(0.72 0.20 320)" },
+  { grupo: "Mayores de 65 años", riesgo_pct: 6.75, ic_inf: 2.10, ic_sup: 8.00, tipo: "edad", color: "oklch(0.78 0.18 175)" },
+  { grupo: "5 a 14 años", riesgo_pct: 6.70, ic_inf: 1.50, ic_sup: 8.00, tipo: "edad", color: "oklch(0.75 0.16 220)" },
+  { grupo: "IRA Baja / Bronquiolitis", riesgo_pct: 9.17, ic_inf: 3.20, ic_sup: 11.20, tipo: "patologia", color: "oklch(0.80 0.18 85)" },
+  { grupo: "IRA Alta (Rinosinusitis)", riesgo_pct: 8.72, ic_inf: 2.50, ic_sup: 10.10, tipo: "patologia", color: "oklch(0.78 0.18 175)" },
+  { grupo: "Influenza y Neumonía", riesgo_pct: 6.91, ic_inf: 1.80, ic_sup: 9.00, tipo: "patologia", color: "oklch(0.72 0.20 320)" },
+  { grupo: "Oído Medio / Mastoides", riesgo_pct: 6.14, ic_inf: 1.20, ic_sup: 8.10, tipo: "patologia", color: "oklch(0.68 0.14 280)" },
+];
+
+// Tasas ajustadas de mortalidad respiratoria por 100.000 hab. (DANE / AMVA 2008-2017)
+const DEFAULT_TASAS_MORTALIDAD = [
+  { nombre: "Caldas", valor: 88.67 },
+  { nombre: "Itagüí", valor: 85.88 },
+  { nombre: "Barbosa", valor: 83.19 },
+  { nombre: "La Estrella", valor: 82.97 },
+  { nombre: "Envigado", valor: 76.28 },
+  { nombre: "Bello", valor: 73.84 },
+  { nombre: "Copacabana", valor: 70.48 },
+  { nombre: "Girardota", valor: 65.69 },
+  { nombre: "Sabaneta", valor: 65.66 },
+  { nombre: "Medellín", valor: 56.92 },
+];
+
 function Dashboard() {
   const [mounted, setMounted] = useState(false);
   const [stations, setStations] = useState<Station[]>([]);
   const [municipios, setMunicipios] = useState<Municipio[]>([]);
-  const [trend, setTrend] = useState<{ periodo: number; casos: number; muertes: number }[]>([]);
-  const [ranking, setRanking] = useState<{ nombre: string; casos: number }[]>([]);
+  
+  // Series multivariadas de morbilidad
+  const [trendPatologia, setTrendPatologia] = useState<{
+    periodo: number;
+    ira_alta: number;
+    ira_baja: number;
+    influenza: number;
+    total: number;
+  }[]>([]);
+
+  // Perfil de susceptibilidad y ranking territorial
+  const [susceptibilidad, setSusceptibilidad] = useState(DEFAULT_SUSCEPTIBILIDAD);
+  const [suscFiltro, setSuscFiltro] = useState<"edad" | "patologia">("edad");
+  const [rankingTasas, setRankingTasas] = useState(DEFAULT_TASAS_MORTALIDAD);
+  const [rankingCasos, setRankingCasos] = useState<{ nombre: string; valor: number }[]>([]);
+  const [rankingMetric, setRankingMetric] = useState<"tasa" | "casos">("tasa");
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
 
-  function processData(s: Station[], m: Municipio[], enf: EnfermedadData[] | null, def: DefuncionData[] | null) {
+  function processData(
+    s: Station[],
+    m: Municipio[],
+    enf: EnfermedadData[] | null,
+    def: DefuncionData[] | null,
+    tasasApi: TasaMortalidadMunicipio[] | null,
+    suscApi: SusceptibilidadItem[] | null
+  ) {
     setStations(s);
     setMunicipios(m);
 
-    const byYear = new Map<number, { casos: number; muertes: number }>();
+    // 1. Serie temporal segmentada por categoría diagnóstica
+    const byYearDiag = new Map<number, { periodo: number; ira_alta: number; ira_baja: number; influenza: number; total: number }>();
     (enf ?? []).forEach((r) => {
-      const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
-      e.casos += r.casos; byYear.set(r.anio, e);
+      const e = byYearDiag.get(r.anio) ?? { periodo: r.anio, ira_alta: 0, ira_baja: 0, influenza: 0, total: 0 };
+      const d = (r.grupo_diagnostico || "").toLowerCase();
+      if (d.includes("superior") || d.includes("vias respiratorias superiores")) {
+        e.ira_alta += r.casos;
+      } else if (d.includes("inferior") || d.includes("vias respiratorias inferiores")) {
+        e.ira_baja += r.casos;
+      } else if (d.includes("influenza") || d.includes("gripe") || d.includes("neumon")) {
+        e.influenza += r.casos;
+      }
+      e.total += r.casos;
+      byYearDiag.set(r.anio, e);
     });
-    (def ?? []).forEach((r) => {
-      const e = byYear.get(r.anio) ?? { casos: 0, muertes: 0 };
-      e.muertes += r.muertes; byYear.set(r.anio, e);
-    });
-    setTrend([...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([periodo, v]) => ({ periodo, ...v })));
 
-    const byMun = new Map<string, number>();
-    (enf ?? []).forEach((r) => byMun.set(r.municipio, (byMun.get(r.municipio) ?? 0) + r.casos));
-    setRanking(
-      [...byMun.entries()]
-        .map(([nombre, casos]) => ({ nombre, casos }))
-        .sort((a, b) => b.casos - a.casos)
-    );
+    const trendFormatted = [...byYearDiag.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([_, v]) => v);
+    setTrendPatologia(trendFormatted);
+
+    // 2. Ranking de casos brutos
+    const byMunCasos = new Map<string, number>();
+    (enf ?? []).forEach((r) => byMunCasos.set(r.municipio, (byMunCasos.get(r.municipio) ?? 0) + r.casos));
+    const sortedCasos = [...byMunCasos.entries()]
+      .map(([nombre, valor]) => ({ nombre, valor }))
+      .sort((a, b) => b.valor - a.valor);
+    if (sortedCasos.length > 0) setRankingCasos(sortedCasos);
+
+    // 3. Tasas de mortalidad ajustadas
+    if (tasasApi && tasasApi.length > 0) {
+      setRankingTasas(tasasApi.map((t) => ({ nombre: t.municipio, valor: Number(t.tasa_ajustada_promedio) })));
+    }
+
+    // 4. Perfil de susceptibilidad epidemiológica
+    if (suscApi && suscApi.length > 0) {
+      const formatted = suscApi.map((item) => ({
+        grupo: item.grupo_edad || item.grupo_diagnostico,
+        riesgo_pct: Number(item.incremento_riesgo_pct),
+        ic_inf: Number(item.limite_inferior),
+        ic_sup: Number(item.limite_superior),
+        tipo: item.grupo_edad ? ("edad" as const) : ("patologia" as const),
+        color: item.grupo_edad?.includes("<5") || item.grupo_edad?.includes("Menor")
+          ? "oklch(0.72 0.20 320)"
+          : "oklch(0.78 0.18 175)",
+      }));
+      setSusceptibilidad(formatted);
+    }
   }
 
   useEffect(() => {
@@ -78,14 +165,16 @@ function Dashboard() {
           await new Promise((r) => setTimeout(r, 5000));
         }
         try {
-          const [s, m, enf, def] = await Promise.all([
+          const [s, m, enf, def, tasas, susc] = await Promise.all([
             fetchEstaciones(),
             fetchMunicipios(),
             fetchEnfermedades(),
             fetchDefunciones(),
+            fetchTasasMortalidad().catch(() => null),
+            fetchSusceptibilidad().catch(() => null),
           ]);
           if (!cancelled) {
-            processData(s, m, enf, def);
+            processData(s, m, enf, def, tasas, susc);
             loaded = true;
           }
         } catch { /* retry */ }
@@ -102,6 +191,13 @@ function Dashboard() {
   );
   const worst = stations[0];
 
+  const suscFiltrada = useMemo(
+    () => susceptibilidad.filter((s) => s.tipo === suscFiltro),
+    [susceptibilidad, suscFiltro]
+  );
+
+  const activeRanking = rankingMetric === "tasa" ? rankingTasas : rankingCasos;
+
   return (
     <div className="min-h-screen">
       {/* Hero */}
@@ -113,59 +209,54 @@ function Dashboard() {
           <h1 className="mt-3 text-5xl md:text-6xl font-bold leading-tight">
             Aire<span className="text-primary">Salud</span>
           </h1>
-          <p className="mt-4 text-lg text-muted-foreground max-w-2xl">
-            Sensores de PM2.5 cruzados con datos epidemiológicos para estimar el impacto real
-            de la contaminación sobre la salud pública.
+          <p className="mt-3 max-w-2xl text-lg text-muted-foreground leading-relaxed">
+            Plataforma de vigilancia ambiental y epidemiológica en tiempo real: integración de
+            sensores SIATA (PM2.5) con coeficientes de riesgo en salud pública para el Valle de Aburrá.
           </p>
         </div>
       </header>
 
+      {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
-        {loading && (
-          <div className="p-4 bg-primary/10 border border-primary/20 text-primary rounded-lg text-sm flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-            Conectando con estaciones de monitoreo…
-          </div>
-        )}
-        {refreshing && (
-          <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-200 rounded-lg text-xs flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-            Actualizando datos en vivo…
-          </div>
-        )}
+        {/* KPI Strip */}
+        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 fade-up">
+          <KpiCard
+            icon={<Wind />}
+            label="Promedio Valle de Aburrá"
+            value={loading ? "—" : avgPm25.toFixed(1)}
+            unit="µg/m³ PM2.5"
+            hint={loading ? "Cargando…" : "Promedio instantáneo red SIATA"}
+          />
+          <KpiCard
+            icon={<MapPin />}
+            label="Estaciones operativas"
+            value={loading ? "—" : String(stations.length)}
+            unit="sensores"
+            hint="Red de monitoreo AMVA"
+          />
+          <KpiCard
+            icon={<AlertTriangle />}
+            label="Punto más crítico"
+            value={loading || !worst ? "—" : `${worst.pm25_ica.toFixed(0)}`}
+            unit="µg/m³"
+            hint={worst ? `${worst.estacion} · ${worst.categoria_ica}` : "—"}
+            accent
+          />
+          <KpiCard
+            icon={<Activity />}
+            label="Condición predominante"
+            value={loading ? "—" : dominantCategory(stations)}
+            unit=""
+            hint="Clasificación ICA (Res. 2254)"
+          />
+        </section>
 
         {/* SECCIÓN A */}
         <section className="space-y-6 fade-up">
-          <SectionHeader icon={<MapPin className="h-5 w-5" />} eyebrow="Sección A" title="Estado actual y mapa de calor" />
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <KpiCard
-              icon={<Activity />}
-              label="PM2.5 promedio regional"
-              value={`${avgPm25.toFixed(1)}`}
-              unit="µg/m³"
-              hint={`${stations.length} estaciones activas`}
-            />
-            <KpiCard
-              icon={<AlertTriangle />}
-              label="Estación más crítica"
-              value={worst ? `${Number(worst.pm25_ica).toFixed(1)}` : "—"}
-              unit="µg/m³"
-              hint={worst?.estacion ?? ""}
-              accent
-            />
-            <KpiCard
-              icon={<Wind />}
-              label="Categoría dominante"
-              value={dominantCategory(stations)}
-              unit=""
-              hint="según ICA de cada estación"
-            />
-          </div>
-
+          <SectionHeader icon={<MapPin className="h-5 w-5" />} eyebrow="Sección A" title="Red de monitoreo en tiempo real" />
           <Card className="overflow-hidden p-0" style={{ boxShadow: "var(--shadow-card)" }}>
-            <div className="h-[480px]">
-              {mounted ? (
+            <div className="h-[460px] relative">
+              {mounted && !loading ? (
                 <Suspense fallback={<MapSkeleton />}>
                   <AirMap stations={stations} />
                 </Suspense>
@@ -177,97 +268,212 @@ function Dashboard() {
 
         {/* SECCIÓN B */}
         <section className="space-y-6 fade-up">
-          <SectionHeader icon={<Calculator className="h-5 w-5" />} eyebrow="Sección B" title="Calculadora de riesgo personalizado" />
+          <SectionHeader icon={<Calculator className="h-5 w-5" />} eyebrow="Sección B" title="Calculadora de incremento de riesgo poblacional (24 h)" />
           <RiskCalculator municipios={municipios} />
         </section>
 
         {/* SECCIÓN C */}
         <section className="space-y-6 fade-up">
-          <SectionHeader icon={<TrendingUp className="h-5 w-5" />} eyebrow="Sección C" title="Tendencias históricas" />
+          <SectionHeader icon={<TrendingUp className="h-5 w-5" />} eyebrow="Sección C" title="Evidencia epidemiológica y tendencias territoriales" />
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+            {/* Tarjeta Gráficas Principales (3 cols) */}
             <Card className="lg:col-span-3 p-6 space-y-6">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-lg font-semibold">Tendencias Temporales</h3>
-                <span className="text-xs text-muted-foreground">
-                  {trend.length > 0 ? `${trend[0].periodo} — ${trend[trend.length - 1].periodo}` : "2008 — 2017"}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                <div>
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Activity className="h-5 w-5 text-primary" />
+                    Dinámica temporal y gradiente de susceptibilidad
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Series históricas de morbilidad y función concentración-respuesta (β) ante PM2.5
+                  </p>
+                </div>
+                <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-surface-elevated border border-border text-muted-foreground self-start sm:self-auto">
+                  {trendPatologia.length > 0 ? `${trendPatologia[0].periodo} — ${trendPatologia[trendPatologia.length - 1].periodo}` : "2008 — 2017"}
                 </span>
               </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Chart 1: Enfermedades */}
+                {/* Gráfica 1: Morbilidad por patología */}
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-[oklch(0.78 0.18 175)]" />
-                    Enfermedades Respiratorias (Casos)
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-[oklch(0.78 0.18 175)]" />
+                      Morbilidad por patología (Casos)
+                    </span>
                   </div>
                   <div className="h-56">
                     <ResponsiveContainer>
-                      <LineChart data={trend}>
+                      <LineChart data={trendPatologia}>
                         <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" />
-                        <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" />
-                        <YAxis stroke="oklch(0.7 0.02 240)" />
-                        <Tooltip contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8 }} />
-                        <Line type="monotone" dataKey="casos" stroke="oklch(0.78 0.18 175)" strokeWidth={2} dot={{ r: 3 }} name="Casos" />
+                        <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" fontSize={11} />
+                        <YAxis stroke="oklch(0.7 0.02 240)" fontSize={11} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip
+                          contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                          formatter={(value: any, name: any) => [Number(value).toLocaleString("es-CO"), name]}
+                        />
+                        <Line type="monotone" dataKey="ira_alta" stroke="oklch(0.78 0.18 175)" strokeWidth={2} dot={{ r: 2.5 }} name="IRA Superior" />
+                        <Line type="monotone" dataKey="ira_baja" stroke="oklch(0.80 0.18 85)" strokeWidth={2} dot={{ r: 2.5 }} name="IRA Inferior" />
+                        <Line type="monotone" dataKey="influenza" stroke="oklch(0.72 0.20 320)" strokeWidth={2} dot={{ r: 2.5 }} name="Neumonía" />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    Fuerte crecimiento en IRA inferior y neumonía a partir de 2010 en la red hospitalaria del AMVA.
+                  </p>
                 </div>
 
-                {/* Chart 2: Defunciones */}
+                {/* Gráfica 2: Gradiente de Susceptibilidad (ΔR % con IC 95%) */}
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-[oklch(0.72 0.20 320)]" />
-                    Defunciones Asociadas (Muertes)
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-[oklch(0.72 0.20 320)]" />
+                      Gradiente ΔR (%) por +10 µg/m³ PM2.5
+                    </span>
+                    <div className="flex gap-1 text-[10px]">
+                      <button
+                        onClick={() => setSuscFiltro("edad")}
+                        className={`px-2 py-0.5 rounded transition-colors ${
+                          suscFiltro === "edad" ? "bg-primary text-primary-foreground font-medium" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        }`}
+                      >
+                        Edad
+                      </button>
+                      <button
+                        onClick={() => setSuscFiltro("patologia")}
+                        className={`px-2 py-0.5 rounded transition-colors ${
+                          suscFiltro === "patologia" ? "bg-primary text-primary-foreground font-medium" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        }`}
+                      >
+                        Diagnóstico
+                      </button>
+                    </div>
                   </div>
+
                   <div className="h-56">
                     <ResponsiveContainer>
-                      <LineChart data={trend}>
-                        <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" />
-                        <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" />
-                        <YAxis stroke="oklch(0.7 0.02 240)" />
-                        <Tooltip contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8 }} />
-                        <Line type="monotone" dataKey="muertes" stroke="oklch(0.72 0.20 320)" strokeWidth={2} dot={{ r: 3 }} name="Muertes" />
-                      </LineChart>
+                      <BarChart data={suscFiltrada} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                        <CartesianGrid stroke="oklch(0.30 0.03 250 / 0.4)" strokeDasharray="3 3" horizontal={false} />
+                        <XAxis type="number" unit="%" stroke="oklch(0.7 0.02 240)" fontSize={11} domain={[0, 14]} />
+                        <YAxis dataKey="grupo" type="category" stroke="oklch(0.7 0.02 240)" fontSize={10} width={95} tickLine={false} />
+                        <Tooltip
+                          contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }}
+                          formatter={(v: any, _, entry: any) => [
+                            `+${Number(v).toFixed(2)}% (IC 95%: [${entry.payload.ic_inf}%, ${entry.payload.ic_sup}%])`,
+                            "Incremento de riesgo relativo (ΔR)"
+                          ]}
+                        />
+                        <Bar dataKey="riesgo_pct" radius={[0, 4, 4, 0]}>
+                          {suscFiltrada.map((entry, idx) => (
+                            <Cell key={`cell-${idx}`} fill={entry.color} />
+                          ))}
+                        </Bar>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    {suscFiltro === "edad"
+                      ? "Menores de 5 años sufren un ΔR de +10.71%, 58% mayor que mayores de 65 años (+6.75%)."
+                      : "Las IRA bajas (+9.17%) e IRA altas (+8.72%) son las más sensibles a picos de PM2.5."}
+                  </p>
                 </div>
               </div>
             </Card>
 
-            <Card className="lg:col-span-2 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">Ranking de morbilidad</h3>
-                <Skull className="h-4 w-4 text-muted-foreground" />
+            {/* Tarjeta Lateral: Ranking Territorial Normalizado (2 cols) */}
+            <Card className="lg:col-span-2 p-6 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-lg font-semibold flex items-center gap-1.5">
+                    <Skull className="h-4 w-4 text-muted-foreground" />
+                    Severidad territorial
+                  </h3>
+                  <div className="flex gap-1 text-[11px]">
+                    <button
+                      onClick={() => setRankingMetric("tasa")}
+                      className={`px-2 py-1 rounded transition-colors ${
+                        rankingMetric === "tasa" ? "bg-primary text-primary-foreground font-semibold" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                      title="Tasa ajustada por 100.000 habitantes (elimina sesgo poblacional)"
+                    >
+                      Tasa / 100k
+                    </button>
+                    <button
+                      onClick={() => setRankingMetric("casos")}
+                      className={`px-2 py-1 rounded transition-colors ${
+                        rankingMetric === "casos" ? "bg-primary text-primary-foreground font-semibold" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                      title="Casos acumulados brutos"
+                    >
+                      Casos
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-xs text-muted-foreground mb-3 flex items-center justify-between">
+                  <span>
+                    {rankingMetric === "tasa"
+                      ? "Tasa ajustada mortalidad respiratoria"
+                      : "Volumen bruto acumulado (2008–2017)"}
+                  </span>
+                  <span className="font-mono text-[10px] text-primary">
+                    {rankingMetric === "tasa" ? "por 100k hab." : "casos"}
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {activeRanking.slice(0, 10).map((r, i) => {
+                    const max = activeRanking[0]?.valor ?? 1;
+                    const pct = (r.valor / max) * 100;
+                    return (
+                      <div key={r.nombre} className="space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="font-medium flex items-center">
+                            <span className="text-muted-foreground text-xs w-6">{String(i + 1).padStart(2, "0")}</span>
+                            {r.nombre}
+                          </span>
+                          <span className="font-mono text-primary font-semibold">
+                            {rankingMetric === "tasa"
+                              ? `${r.valor.toFixed(1)}`
+                              : r.valor.toLocaleString("es-CO")}
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-700"
+                            style={{
+                              width: `${pct}%`,
+                              background: rankingMetric === "tasa"
+                                ? "linear-gradient(90deg, oklch(0.72 0.20 320), oklch(0.78 0.18 175))"
+                                : "var(--gradient-primary)"
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="space-y-2">
-                {ranking.map((r, i) => {
-                  const max = ranking[0]?.casos ?? 1;
-                  const pct = (r.casos / max) * 100;
-                  return (
-                    <div key={r.nombre} className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="font-medium">
-                          <span className="text-muted-foreground mr-2">{String(i + 1).padStart(2, "0")}</span>
-                          {r.nombre}
-                        </span>
-                        <span className="font-mono text-primary">{r.casos.toLocaleString("es-CO")}</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-700"
-                          style={{ width: `${pct}%`, background: "var(--gradient-primary)" }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+
+              {/* Nota de valor epidemiológico */}
+              <div className="p-3 rounded-lg bg-surface-elevated/70 border border-border/80 text-[11px] text-muted-foreground space-y-1 mt-4">
+                <div className="font-semibold text-foreground flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5 text-primary" />
+                  Hallazgo epidemiológico clave:
+                </div>
+                <p className="leading-relaxed">
+                  {rankingMetric === "tasa"
+                    ? "Al normalizar por tasa por 100.000 hab., Caldas (88.7) e Itagüí (85.9) encabezan la severidad respiratoria del valle, mientras Medellín (56.9) se ubica en el extremo inferior, corrigiendo el sesgo por volumen poblacional."
+                    : "El volumen bruto sitúa a Medellín en primer lugar debido a que concentra el 60% de la población metropolitana. Utiliza el selector 'Tasa / 100k' para ver el riesgo per cápita."}
+                </p>
               </div>
             </Card>
           </div>
         </section>
 
-        <footer className="py-8 text-center text-xs text-muted-foreground">
-          Datos basados en mediciones SIATA y registros epidemiológicos del Valle de Aburrá.
+        <footer className="py-8 text-center text-xs text-muted-foreground border-t border-border/50">
+          Datos basados en mediciones SIATA y registros epidemiológicos del Valle de Aburrá (2008–2017).
         </footer>
       </main>
     </div>
@@ -383,9 +589,10 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
   return (
     <Card className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-2 gap-8" style={{ boxShadow: "var(--shadow-card)" }}>
       <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Combina mediciones en vivo de PM2.5 con coeficientes epidemiológicos (β) por municipio,
-          edad y sexo para estimar el incremento de riesgo individual.
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Estima el incremento relativo del riesgo poblacional de morbilidad respiratoria aplicando
+          la función concentración-respuesta (β) al <strong>promedio móvil de las últimas 24 horas de PM2.5</strong> (alineado con la Resolución 2254/2017 y guías OMS),
+          contrastado con la lectura puntual en vivo.
         </p>
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -416,7 +623,7 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
           </div>
           <Button onClick={calc} disabled={loading} className="w-full mt-2"
                   style={{ background: "var(--gradient-primary)", color: "var(--primary-foreground)" }}>
-            {loading ? "Calculando…" : "Calcular riesgo"}
+            {loading ? "Calculando…" : "Calcular riesgo (Base 24 h)"}
           </Button>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
@@ -427,35 +634,69 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
         <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full blur-3xl opacity-30"
              style={{ background: "var(--gradient-accent)" }} />
         <div className="relative">
-          <div className="text-xs font-mono uppercase tracking-widest text-primary">Resultado</div>
+          <div className="text-xs font-mono uppercase tracking-widest text-primary">Resultado de Exposición e Impacto</div>
           {result ? (
             <div className="mt-3 space-y-4 fade-up">
               <div>
                 <div className="text-xs text-muted-foreground">Estación de referencia</div>
-                <div className="font-medium">{result.estacion_monitoreo}</div>
-                <div className={`text-xs ${aqiTextClass(result.categoria_ica)}`}>{result.categoria_ica}</div>
-                <div className="text-sm font-semibold mt-1">PM2.5 actual: {result.pm25_ica_actual.toFixed(1)} µg/m³</div>
+                <div className="font-medium text-foreground">{result.estacion_monitoreo}</div>
+                <div className={`text-xs ${aqiTextClass(result.categoria_ica)} font-semibold mt-0.5`}>
+                  ICA: {result.categoria_ica} (sobre 24 h)
+                </div>
+                
+                {/* Visualización de doble métrica: 24h vs instantáneo */}
+                <div className="mt-2.5 p-3 rounded-lg bg-surface/40 border border-border/60 space-y-1.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Exposición base (promedio 24 h):</span>
+                    <span className="font-mono font-bold text-primary">
+                      {(result.pm25_promedio_24h ?? result.pm25_ica_actual).toFixed(1)} µg/m³
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] text-muted-foreground border-t border-border/40 pt-1">
+                    <span>Lectura instantánea en vivo:</span>
+                    <span className="font-mono">{result.pm25_ica_actual.toFixed(1)} µg/m³</span>
+                  </div>
+                  {result.n_lecturas_24h !== undefined && (
+                    <div className="text-[10px] text-muted-foreground/80">
+                      Observaciones en ventana: {result.n_lecturas_24h} registros
+                    </div>
+                  )}
+                </div>
               </div>
               
               {result.nota_estimacion && (
-                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200 leading-relaxed font-sans">
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200 leading-relaxed font-sans">
                   ⚠️ {result.nota_estimacion}
                 </div>
               )}
               
-              <div className="pt-3 border-t border-border space-y-3">
-                <div className="text-xs text-muted-foreground uppercase tracking-wider">Incrementos de Riesgo por Enfermedad</div>
+              <div className="pt-2 border-t border-border space-y-3">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider">
+                  Incremento de Riesgo Poblacional Atribuible
+                </div>
                 {result.calculos_riesgo.map((calc, idx) => (
-                  <div key={idx} className="p-2.5 rounded-lg bg-surface/30 border border-border/50">
+                  <div key={idx} className="p-3 rounded-lg bg-surface/30 border border-border/50 space-y-1">
                     <div className="text-xs font-semibold text-foreground">{calc.enfermedad}</div>
-                    <div className="flex justify-between items-baseline mt-1.5">
-                      <div className="text-xs text-muted-foreground">Riesgo incremental:</div>
+                    <div className="flex justify-between items-baseline mt-1">
+                      <div className="text-xs text-muted-foreground">ΔR estimado (24 h):</div>
                       <span className="text-xl font-bold text-primary">
                         +{calc.incremento_riesgo_porcentaje_actual.toFixed(2)}%
                       </span>
                     </div>
-                    <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+
+                    {/* Intervalo de confianza del 95% si existe */}
+                    {calc.incremento_riesgo_inf !== undefined && calc.incremento_riesgo_inf !== null && calc.incremento_riesgo_sup !== null && (
+                      <div className="flex justify-between text-[11px] text-emerald-400/90 font-mono">
+                        <span>IC 95%:</span>
+                        <span>[{calc.incremento_riesgo_inf.toFixed(2)}%, {calc.incremento_riesgo_sup.toFixed(2)}%]</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between text-[10px] text-muted-foreground/80 mt-1 border-t border-border/30 pt-1">
                       <span>β: {calc.beta_historico.toFixed(6)}</span>
+                      {calc.incremento_riesgo_porcentaje_instantaneo !== undefined && (
+                        <span>Instantáneo: +{calc.incremento_riesgo_porcentaje_instantaneo.toFixed(2)}%</span>
+                      )}
                       <span>Histórico base: {calc.incremento_historico_base.toFixed(2)}%</span>
                     </div>
                   </div>
@@ -464,7 +705,7 @@ function RiskCalculator({ municipios }: { municipios: Municipio[] }) {
             </div>
           ) : (
             <div className="mt-3 text-sm text-muted-foreground">
-              Ingresa los datos y presiona calcular para ver tu estimación personalizada.
+              Ingresa los datos y presiona calcular para evaluar el incremento de riesgo basado en el promedio de 24 horas.
             </div>
           )}
         </div>
