@@ -446,7 +446,15 @@ function Dashboard() {
                         <XAxis dataKey="periodo" stroke="oklch(0.7 0.02 240)" fontSize={11} />
                         <YAxis stroke="oklch(0.7 0.02 240)" fontSize={11} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                         <Tooltip
-                          contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                          contentStyle={{
+                            background: "var(--surface-elevated, #1e293b)",
+                            border: "1px solid var(--border, #334155)",
+                            borderRadius: 8,
+                            fontSize: 12,
+                            color: "#ffffff"
+                          }}
+                          labelStyle={{ color: "#ffffff", fontWeight: 600 }}
+                          itemStyle={{ color: "#ffffff" }}
                           formatter={(value: any, name: any) => [Number(value).toLocaleString("es-CO"), name]}
                         />
                         <Line type="monotone" dataKey="ira_alta" stroke="oklch(0.78 0.18 175)" strokeWidth={2} dot={{ r: 2.5 }} name="IRA Superior" />
@@ -506,7 +514,15 @@ function Dashboard() {
                           tickLine={false}
                         />
                         <Tooltip
-                          contentStyle={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }}
+                          contentStyle={{
+                            background: "var(--surface-elevated, #1e293b)",
+                            border: "1px solid var(--border, #334155)",
+                            borderRadius: 8,
+                            fontSize: 11,
+                            color: "#ffffff"
+                          }}
+                          labelStyle={{ color: "#ffffff", fontWeight: 600 }}
+                          itemStyle={{ color: "#ffffff" }}
                           formatter={(v: any, _, entry: any) => [
                             `+${Number(v).toFixed(2)}% (IC 95%: [${entry.payload.ic_inf}%, ${entry.payload.ic_sup}%])`,
                             "Incremento de riesgo relativo (ΔR)"
